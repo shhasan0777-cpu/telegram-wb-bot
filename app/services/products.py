@@ -3,7 +3,6 @@ from aiogram.exceptions import TelegramBadRequest
 from app.keyboards.common import calc_unit_keyboard
 from app.services.economics import calc_volume_liters
 from app.services.wb_client import WBClient
-from app.services.wb_public_prices import get_public_price
 
 
 def get_card_photo(card):
@@ -80,24 +79,13 @@ async def build_product_data(api_key, selected_card, nm_id):
             promo_price = min(all_prices)
 
         break   
-    public_price = await get_public_price(nm_id)
-
-    wb_price = public_price.final_price if public_price else None
-    price_after_sale = public_price.price_after_sale if public_price else None
-    spp_percent = public_price.spp_percent if public_price else 0
-    spp_rub = public_price.spp_rub if public_price else 0
-
-    if seller_price is None and public_price and public_price.basic_price:
-        seller_price = public_price.basic_price
-
-    if promo_price is None and public_price and public_price.price_after_sale:
-        promo_price = public_price.price_after_sale
+    wb_price = None
     commissions=await client.get_commissions()
     commission_percent=0; subject=(selected_card.get("subjectName") or "").lower()
     for item in commissions:
         if (item.get("subjectName") or "").lower()==subject:
             commission_percent=item.get("kgvpMarketplace") or 0; break
-    price_for_calc = wb_price or promo_price or seller_price or 0
+    price_for_calc = promo_price or seller_price or 0
     return {
         "nm_id": nm_id,
         "product_name": selected_card.get("title"),
@@ -110,15 +98,9 @@ async def build_product_data(api_key, selected_card, nm_id):
 
         "seller_price": seller_price,
         "promo_price": promo_price,
-        "wb_price": wb_price,
 
         "price": seller_price,
-        "price_after_sale": price_after_sale,
         "price_with_spp": price_for_calc,
-
-        "spp_percent": spp_percent,
-        "spp_rub": spp_rub,
-        "public_price_source": public_price.source_url if public_price else None,
 
         "commission_percent": commission_percent,
         "commission_rub": calc_commission(price_for_calc, commission_percent),
@@ -132,12 +114,49 @@ async def build_product_data(api_key, selected_card, nm_id):
     }
     
 def build_product_preview_text(data):
-    name=html.escape(str(data.get("product_name") or "Товар")); nm_id=data.get("nm_id")
-    vendor=html.escape(str(data.get("vendor_code") or "не указан")); brand=html.escape(str(data.get("brand") or "не указан")); category=html.escape(str(data.get("category") or "не указана")); barcode=html.escape(str(data.get("barcode") or "не указан"))
-    product_url=f"https://www.wildberries.ru/catalog/{nm_id}/detail.aspx"
-    text=(f"📦 <a href=\"{product_url}\">{name}</a>\n\nАртикул WB: <b>{nm_id}</b>\nАртикул продавца: <b>{vendor}</b>\nЦена продавца: <b>{data.get('seller_price') or 'не найдена'} ₽</b>\nЦена по акции: <b>{data.get('promo_price') or 'не найдена'} ₽</b>\nЦена на WB: <b>{data.get('wb_price') or 'не найдена'} ₽</b>\nСкидка СПП: <b>{data.get('spp_percent') or 0}%</b>\nКатегория: <b>{category}</b>\nБренд: <b>{brand}</b>\n")
-    if data.get("size"): text += f"Размер: <b>{html.escape(str(data.get('size')))}</b>\n"
-    return text + f"Баркод: <b>{barcode}</b>"
+    name = html.escape(str(data.get("product_name") or "Товар"))
+    nm_id = data.get("nm_id")
+    vendor = html.escape(str(data.get("vendor_code") or "не указан"))
+    brand = html.escape(str(data.get("brand") or "не указан"))
+    category = html.escape(str(data.get("category") or "не указана"))
+    barcode = html.escape(str(data.get("barcode") or "не указан"))
+    product_url = f"https://www.wildberries.ru/catalog/{nm_id}/detail.aspx"
+
+    text = (
+        f"📦 <a href=\"{product_url}\">{name}</a>\n\n"
+        f"Артикул WB: <b>{nm_id}</b>\n"
+        f"Артикул продавца: <b>{vendor}</b>\n"
+        f"Категория: <b>{category}</b>\n"
+        f"Бренд: <b>{brand}</b>\n"
+        f"Баркод: <b>{barcode}</b>\n\n"
+        f"💰 Цена продавца: <b>{data.get('seller_price') or 'не найдена'} ₽</b>\n"
+        f"🏷 Цена по акции: <b>{data.get('promo_price') or 'не найдена'} ₽</b>\n"
+    )
+
+    if data.get("size"):
+        text += f"Размер: <b>{html.escape(str(data.get('size')))}</b>\n"
+
+    if data.get("length") or data.get("width") or data.get("height"):
+        text += (
+            f"\n📐 Габариты: <b>"
+            f"{data.get('length') or 0} × {data.get('width') or 0} × {data.get('height') or 0} см"
+            f"</b>\n"
+        )
+
+    text += (
+        f"📦 Объём: <b>{round(data.get('volume_liters') or 0, 2)} л</b>\n"
+        f"🚚 Расчётный литраж: <b>{data.get('billing_liters') or 0} л</b>\n"
+    )
+
+    if data.get("weight"):
+        text += f"⚖️ Вес: <b>{data.get('weight')} кг</b>\n"
+
+    text += (
+        f"\n💼 Комиссия WB: <b>{data.get('commission_percent') or 0}%"
+        f" = {round(data.get('commission_rub') or 0, 2)} ₽</b>"
+    )
+
+    return text
 
 async def send_product_preview(message, data):
     text=build_product_preview_text(data)

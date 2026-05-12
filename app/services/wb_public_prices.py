@@ -202,7 +202,7 @@ def parse_public_price(nm_id: str, payload: dict, source_url: str = WB_PUBLIC_CA
 def build_basket_urls(nm_id: str) -> list[str]:
     nm = int(nm_id)
     vol = nm // 100000
-    part = nm // 1000
+    part = nm // 10000
 
     urls = []
 
@@ -226,9 +226,7 @@ async def get_public_price(nm_id: str, dest: int = DEFAULT_DEST) -> WBPublicPric
         ),
         "Accept": "application/json, text/plain, */*",
         "Accept-Language": "ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7",
-        "Referer": f"https://www.wildberries.ru/catalog/{nm_id}/detail.aspx",
     }
-
     timeout = aiohttp.ClientTimeout(total=15, connect=5)
 
     # 1. Сначала пробуем card.wb.ru
