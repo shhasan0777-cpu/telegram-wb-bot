@@ -13,6 +13,62 @@ from app.data.wb import FBO_WAREHOUSES
 
 router = Router()
 
+def normalize_warehouse_name(value: str) -> str:
+    return " ".join(str(value or "").strip().lower().split())
+
+
+def find_warehouse_by_user_text(text: str) -> str | None:
+    normalized = normalize_warehouse_name(text)
+
+    for warehouse in FBO_WAREHOUSES:
+        if normalize_warehouse_name(warehouse) == normalized:
+            return warehouse
+
+    return None
+
+
+def shipment_type_title(value: str | None) -> str:
+    if value == "boxes":
+        return "Короба"
+    if value == "monopallets":
+        return "Монопаллеты"
+    return "не выбран"
+
+
+def tariff_value(tariff: dict | None, key: str):
+    if not tariff:
+        return "не найдено"
+    value = tariff.get(key)
+    if value in (None, ""):
+        return "не найдено"
+    return value
+
+
+def build_fbo_tariff_text(session, tariff: dict | None) -> str:
+    return (
+        f"✅ Модель работы: FBO\n"
+        f"✅ Тип отгрузки: {shipment_type_title(session['fbo_shipment_type'] if 'fbo_shipment_type' in session.keys() else None)}\n"
+        f"✅ Склад: {session['warehouse_name']}\n\n"
+        f"📦 Тарифы склада:\n"
+        f"• Логистика за 1 л: {tariff_value(tariff, 'boxDeliveryBase')} ₽\n"
+        f"• Доп. литр логистики: {tariff_value(tariff, 'boxDeliveryLiter')} ₽\n"
+        f"• Приёмка: {tariff_value(tariff, 'boxStorageBase')} ₽\n"
+        f"• Хранение за 1 л: {tariff_value(tariff, 'boxStorageBase')} ₽\n"
+        f"• Доп. литр хранения: {tariff_value(tariff, 'boxStorageLiter')} ₽\n\n"
+        f"Введите закупку товара за 1 шт в ₽:"
+    )
+
+
+async def send_fbo_tariffs_and_purchase_prompt(message_or_callback_message, session, api_key: str):
+    try:
+        tariffs = await WBClient(api_key).get_box_tariffs()
+        tariff = find_warehouse_tariff(tariffs, session["warehouse_name"])
+    except Exception as e:
+        tariff = None
+        print(f"WB tariffs API unavailable for warehouse={session['warehouse_name']}: {e}")
+
+    await message_or_callback_message.answer(build_fbo_tariff_text(session, tariff))
+
 async def check_api_key(api_key: str):
     api_key=str(api_key).strip()
     if len(api_key)<50: return False, "Ключ слишком короткий."
@@ -171,10 +227,10 @@ async def choose_fbo_shipment_type(callback: CallbackQuery):
 
     update_session(
         s["id"],
-        # пока не сохраняем отдельным полем, потому что в таблице его нет
+        fbo_shipment_type=shipment_type,
         stage="warehouse_choose",
     )
-
+    
     await callback.message.edit_text(
         f"✅ Тип отгрузки: {shipment_title}\n\n"
         "Теперь выбери склад из списка или напиши название склада вручную 👇",
@@ -191,13 +247,27 @@ async def warehouse_page(callback: CallbackQuery):
 
 @router.callback_query(F.data.startswith("warehouse_id_"))
 async def choose_warehouse_by_id(callback: CallbackQuery):
-    s=get_last_session(callback.from_user.id)
-    if not s: await callback.answer(); return
-    idx=int(callback.data.replace("warehouse_id_", ""))
-    if idx<0 or idx>=len(FBO_WAREHOUSES): await callback.answer("Склад не найден"); return
-    wh=FBO_WAREHOUSES[idx]; update_session(s["id"], warehouse_name=wh, stage="purchase_price")
-    await callback.message.answer(f"✅ Склад: {wh}\n\nВведите закупку товара за 1 шт в ₽:"); await callback.answer()
+    s = get_last_session(callback.from_user.id)
+    if not s:
+        await callback.answer()
+        return
 
+    idx = int(callback.data.replace("warehouse_id_", ""))
+
+    if idx < 0 or idx >= len(FBO_WAREHOUSES):
+        await callback.answer("Склад не найден")
+        return
+
+    wh = FBO_WAREHOUSES[idx]
+    update_session(s["id"], warehouse_name=wh, stage="purchase_price")
+    updated = get_last_session(callback.from_user.id)
+    api_key = get_session_api_key(updated)
+
+    await callback.message.edit_text(f"✅ Склад: {wh}")
+    await send_fbo_tariffs_and_purchase_prompt(callback.message, updated, api_key)
+    await callback.answer()
+    
+        
 @router.callback_query(F.data == "warehouse_other")
 async def warehouse_other(callback: CallbackQuery):
     s=get_last_session(callback.from_user.id)
@@ -238,7 +308,23 @@ async def handle_unit_stage(message: Message, session, stage: str, text: str):
         if not m: await message.answer("❌ Не смог найти SKU в ссылке.\n\nПришли ссылку вида:\nhttps://www.wildberries.ru/catalog/123456789/detail.aspx"); return
         await process_product_by_nm(message, session, m.group(1)); return
     if stage=="product_sku": await process_product_by_nm(message, session, text); return
-    if stage=="warehouse_text": update_session(session["id"], warehouse_name=text, stage="purchase_price"); await message.answer(f"✅ Склад: {text}\n\nВведите закупку товара за 1 шт в ₽:"); return
+    if stage == "warehouse_text":
+        warehouse = find_warehouse_by_user_text(text)
+
+        if not warehouse:
+            await message.answer(
+                "❌ Такого склада нет в списке FBO.\n\n"
+                "Введи название склада точно как в списке или выбери склад кнопкой."
+            )
+            return
+
+        update_session(session["id"], warehouse_name=warehouse, stage="purchase_price")
+        updated = get_last_session(uid)
+        api_key = get_session_api_key(updated)
+
+        await message.answer(f"✅ Склад: {warehouse}")
+        await send_fbo_tariffs_and_purchase_prompt(message, updated, api_key)
+        return
     prompts={"purchase_price":("purchase_price","fulfilment_price","Введите фулфилмент за 1 шт в ₽:"),"fulfilment_price":("fulfilment_price","tax_percent","Введите налог в %:\n\nПример: 6 (для УСН) или 0"),"tax_percent":("tax_percent","other_expenses","Введите прочие расходы в ₽ (упаковка, этикетки и т.д.):\n\nЕсли нет — введите 0"),"other_expenses":("other_expenses","salary_expenses","Введите расходы на зарплаты в ₽:\n\nЕсли нет — введите 0")}
     if stage in prompts:
         val=parse_non_negative_float(text, max_value=100 if stage=="tax_percent" else None)
