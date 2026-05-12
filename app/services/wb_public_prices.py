@@ -3,8 +3,24 @@ from dataclasses import dataclass
 
 
 WB_PUBLIC_CARD_URL = "https://card.wb.ru/cards/v2/detail"
+WB_BASKET_HOSTS = [
+    "basket-01.wbbasket.ru",
+    "basket-02.wbbasket.ru",
+    "basket-03.wbbasket.ru",
+    "basket-04.wbbasket.ru",
+    "basket-05.wbbasket.ru",
+    "basket-06.wbbasket.ru",
+    "basket-07.wbbasket.ru",
+    "basket-08.wbbasket.ru",
+    "basket-09.wbbasket.ru",
+    "basket-10.wbbasket.ru",
+    "basket-11.wbbasket.ru",
+    "basket-12.wbbasket.ru",
+    "basket-13.wbbasket.ru",
+    "basket-14.wbbasket.ru",
+    "basket-15.wbbasket.ru",
+]
 DEFAULT_DEST = -1257786
-
 
 @dataclass(frozen=True)
 class WBPublicPrice:
@@ -65,15 +81,33 @@ def _extract_price_from_size(nm_id: str, product: dict, source_url: str) -> WBPu
     for size in sizes:
         price = size.get("price") or {}
 
-        final_price = _money_from_wb(price.get("total"))
-        price_after_sale = _money_from_wb(price.get("product"))
-        basic_price = _money_from_wb(price.get("basic"))
+        final_price = (
+            _money_from_wb(price.get("total"))
+            or _money_from_wb(price.get("salePriceU"))
+            or _money_from_wb(size.get("salePriceU"))
+        )
 
+        price_after_sale = (
+            _money_from_wb(price.get("product"))
+            or _money_from_wb(price.get("priceWithSale"))
+            or _money_from_wb(size.get("priceWithSale"))
+        )
+
+        basic_price = (
+            _money_from_wb(price.get("basic"))
+            or _money_from_wb(price.get("priceU"))
+            or _money_from_wb(size.get("priceU"))
+        )
+        
         if not final_price:
             continue
 
         if not price_after_sale:
-            price_after_sale = final_price
+            sale_percent = product.get("sale") or 0
+            if basic_price and sale_percent:
+                price_after_sale = round(basic_price * (1 - float(sale_percent) / 100), 2)
+            else:
+                price_after_sale = final_price
 
         spp_percent, spp_rub = _calc_spp(final_price, price_after_sale)
 
@@ -134,49 +168,123 @@ def _extract_price_from_product(nm_id: str, product: dict, source_url: str) -> W
 def parse_public_price(nm_id: str, payload: dict, source_url: str = WB_PUBLIC_CARD_URL) -> WBPublicPrice | None:
     products = payload.get("data", {}).get("products", [])
 
+    if not products:
+        return None
+
+    matched_product = None
+
     for product in products:
-        if str(product.get("id") or product.get("nmID") or product.get("nmId") or "") != str(nm_id):
-            continue
+        product_id = str(
+            product.get("id")
+            or product.get("nmID")
+            or product.get("nmId")
+            or product.get("root")
+            or ""
+        )
 
-        price = _extract_price_from_size(nm_id, product, source_url)
-        if price:
-            return price
+        if product_id == str(nm_id):
+            matched_product = product
+            break
 
-        return _extract_price_from_product(nm_id, product, source_url)
+    # Если WB вернул один товар по конкретному nm,
+    # берём его даже если id лежит не в ожидаемом поле.
+    if matched_product is None and len(products) == 1:
+        matched_product = products[0]
 
-    return None
+    if matched_product is None:
+        return None
 
+    price = _extract_price_from_size(nm_id, matched_product, source_url)
+    if price:
+        return price
+
+    return _extract_price_from_product(nm_id, matched_product, source_url)
+def build_basket_urls(nm_id: str) -> list[str]:
+    nm = int(nm_id)
+    vol = nm // 100000
+    part = nm // 1000
+
+    urls = []
+
+    for host in WB_BASKET_HOSTS:
+        urls.append(
+            f"https://{host}/vol{vol}/part{part}/{nm}/info/ru/card.json"
+        )
+
+    return urls
 
 async def get_public_price(nm_id: str, dest: int = DEFAULT_DEST) -> WBPublicPrice | None:
+    print("GET_PUBLIC_PRICE CALLED:", nm_id)
+
     nm_id = str(nm_id).strip()
 
-    params = {
-        "appType": 1,
-        "curr": "rub",
-        "dest": dest,
-        "nm": nm_id,
-    }
-
     headers = {
-        "User-Agent": "Mozilla/5.0",
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/124.0.0.0 Safari/537.36"
+        ),
         "Accept": "application/json, text/plain, */*",
+        "Accept-Language": "ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7",
         "Referer": f"https://www.wildberries.ru/catalog/{nm_id}/detail.aspx",
     }
 
     timeout = aiohttp.ClientTimeout(total=15, connect=5)
 
-    async with aiohttp.ClientSession(timeout=timeout) as session:
-        async with session.get(WB_PUBLIC_CARD_URL, headers=headers, params=params) as response:
-            if response.status != 200:
-                return None
+    # 1. Сначала пробуем card.wb.ru
+    params = {
+        "appType": "1",
+        "curr": "rub",
+        "dest": str(dest),
+        "spp": "30",
+        "ab_testing": "false",
+        "lang": "ru",
+        "nm": nm_id,
+    }
 
-            payload = await response.json(content_type=None)
-            print("WB PUBLIC STATUS:", response.status)
-            print("WB PUBLIC PAYLOAD:", payload)
+    try:
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with session.get(WB_PUBLIC_CARD_URL, headers=headers, params=params) as response:
+                text = await response.text()
 
-    source_url = (
-        f"{WB_PUBLIC_CARD_URL}"
-        f"?appType=1&curr=rub&dest={dest}&nm={nm_id}"
-    )
+                print("WB PUBLIC URL:", str(response.url))
+                print("WB PUBLIC STATUS:", response.status)
+                print("WB PUBLIC TEXT:", text[:1000])
 
-    return parse_public_price(nm_id, payload, source_url=source_url)
+                if response.status == 200:
+                    payload = await response.json(content_type=None)
+                    parsed = parse_public_price(nm_id, payload, source_url=str(response.url))
+                    if parsed:
+                        return parsed
+
+            # 2. Если card.wb.ru дал 403, пробуем basket hosts
+            for url in build_basket_urls(nm_id):
+                try:
+                    async with session.get(url, headers=headers) as response:
+                        text = await response.text()
+
+                        print("WB BASKET URL:", str(response.url))
+                        print("WB BASKET STATUS:", response.status)
+                        print("WB BASKET TEXT:", text[:1000])
+
+                        if response.status != 200:
+                            continue
+
+                        payload = await response.json(content_type=None)
+
+                        # basket card.json обычно не содержит СПП-цену.
+                        # Но может содержать базовые данные карточки.
+                        # Поэтому пока используем его только как диагностику.
+                        print("WB BASKET PAYLOAD:", payload)
+
+                        return None
+
+                except Exception as e:
+                    print("WB BASKET ERROR:", url, repr(e))
+                    continue
+
+    except Exception as e:
+        print("WB PUBLIC ERROR:", repr(e))
+        return None
+
+    return None
