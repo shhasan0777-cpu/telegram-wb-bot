@@ -52,7 +52,7 @@ def build_fbo_tariff_text(session, tariff: dict | None) -> str:
         f"📦 Тарифы склада:\n"
         f"• Логистика за 1 л: {tariff_value(tariff, 'boxDeliveryBase')} ₽\n"
         f"• Доп. литр логистики: {tariff_value(tariff, 'boxDeliveryLiter')} ₽\n"
-        f"• Приёмка: {tariff_value(tariff, 'boxStorageBase')} ₽\n"
+        f"• Приёмка: бесплатно\n"
         f"• Хранение за 1 л: {tariff_value(tariff, 'boxStorageBase')} ₽\n"
         f"• Доп. литр хранения: {tariff_value(tariff, 'boxStorageLiter')} ₽\n\n"
         f"Введите закупку товара за 1 шт в ₽:"
@@ -63,6 +63,8 @@ async def send_fbo_tariffs_and_purchase_prompt(message_or_callback_message, sess
     try:
         tariffs = await WBClient(api_key).get_box_tariffs()
         tariff = find_warehouse_tariff(tariffs, session["warehouse_name"])
+        print("SELECTED WAREHOUSE:", session["warehouse_name"])
+        print("FOUND WB TARIFF:", tariff)
     except Exception as e:
         tariff = None
         print(f"WB tariffs API unavailable for warehouse={session['warehouse_name']}: {e}")
