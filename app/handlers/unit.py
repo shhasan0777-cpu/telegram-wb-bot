@@ -49,15 +49,14 @@ def build_fbo_tariff_text(session, tariff: dict | None) -> str:
         f"✅ Модель работы: FBO\n"
         f"✅ Тип отгрузки: {shipment_type_title(session['fbo_shipment_type'] if 'fbo_shipment_type' in session.keys() else None)}\n"
         f"✅ Склад: {session['warehouse_name']}\n\n"
-        f"📦 Тарифы склада:\n"
+        f"📦 Тарифы склада на сегодня:\n"
         f"• Логистика за 1 л: {tariff_value(tariff, 'boxDeliveryBase')} ₽\n"
         f"• Доп. литр логистики: {tariff_value(tariff, 'boxDeliveryLiter')} ₽\n"
-        f"• Приёмка: бесплатно\n"
-        f"• Хранение за 1 л: {tariff_value(tariff, 'boxStorageBase')} ₽\n"
-        f"• Доп. литр хранения: {tariff_value(tariff, 'boxStorageLiter')} ₽\n\n"
+        f"• Приёмка поставки: бесплатно\n"
+        f"• Хранение за 1 л остатков: {tariff_value(tariff, 'boxStorageBase')} ₽\n"
+        f"• Доп. литр хранения остатков: {tariff_value(tariff, 'boxStorageLiter')} ₽\n\n"
         f"Введите закупку товара за 1 шт в ₽:"
     )
-
 
 async def send_fbo_tariffs_and_purchase_prompt(message_or_callback_message, session, api_key: str):
     try:
