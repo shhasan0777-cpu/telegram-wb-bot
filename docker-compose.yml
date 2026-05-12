@@ -1,0 +1,10 @@
+services:
+  bot:
+    build: .
+    env_file: .env
+    restart: unless-stopped
+    volumes:
+      - ./database.db:/app/database.db
+      - ./bot.log:/app/bot.log
+    ports:
+      - "8080:8080"

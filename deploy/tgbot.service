@@ -1,0 +1,14 @@
+[Unit]
+Description=Telegram WB Bot
+After=network.target
+
+[Service]
+WorkingDirectory=/opt/tgbot
+EnvironmentFile=/opt/tgbot/.env
+ExecStart=/opt/tgbot/venv/bin/python -m app.main
+Restart=always
+RestartSec=5
+User=www-data
+
+[Install]
+WantedBy=multi-user.target

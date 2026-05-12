@@ -1,0 +1,34 @@
+# ENV
+.env
+
+# DATABASE
+*.db
+*.sqlite3
+
+# LOGS
+*.log
+
+# VENV
+venv/
+.envrc
+
+# CACHE
+__pycache__/
+.pytest_cache/
+*.pyc
+
+# IDE
+.vscode/
+.idea/
+
+# EXPORTS
+*_export.csv
+voices/
+
+# SYSTEM
+.DS_Store
+Thumbs.db
+
+*.py[cod]
+
+**/__pycache__/
