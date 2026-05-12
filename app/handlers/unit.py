@@ -68,7 +68,11 @@ async def send_fbo_tariffs_and_purchase_prompt(message_or_callback_message, sess
         print(f"WB tariffs API unavailable for warehouse={session['warehouse_name']}: {e}")
 
     await message_or_callback_message.answer(build_fbo_tariff_text(session, tariff))
-
+async def safe_callback_answer(callback: CallbackQuery, text: str | None = None):
+    try:
+        await callback.answer(text)
+    except Exception as e:
+        print(f"Callback answer skipped: {e}")
 async def check_api_key(api_key: str):
     api_key=str(api_key).strip()
     if len(api_key)<50: return False, "Ключ слишком короткий."
@@ -149,16 +153,22 @@ async def products_batch(callback: CallbackQuery):
 
 @router.callback_query(F.data == "enter_wb_link")
 async def enter_wb_link(callback: CallbackQuery):
-    s=get_last_session(callback.from_user.id)
-    if s: update_session(s["id"], stage="product_link"); await callback.message.answer("Отправь ссылку на товар Wildberries:")
-    await callback.answer()
+    await safe_callback_answer(callback)
 
+    s = get_last_session(callback.from_user.id)
+    if s:
+        update_session(s["id"], stage="product_link")
+        await callback.message.answer("Отправь ссылку на товар Wildberries:")
+        
 @router.callback_query(F.data == "enter_wb_sku")
 async def enter_wb_sku(callback: CallbackQuery):
-    s=get_last_session(callback.from_user.id)
-    if s: update_session(s["id"], stage="product_sku"); await callback.message.answer("Отправь SKU / nmID товара или артикул продавца:")
-    await callback.answer()
+    await safe_callback_answer(callback)
 
+    s = get_last_session(callback.from_user.id)
+    if s:
+        update_session(s["id"], stage="product_sku")
+        await callback.message.answer("Отправь SKU / nmID товара или артикул продавца:")
+        
 @router.callback_query(F.data.startswith("select_product_"))
 async def select_product(callback: CallbackQuery):
     user_id=callback.from_user.id; nm_id=callback.data.replace("select_product_","")
