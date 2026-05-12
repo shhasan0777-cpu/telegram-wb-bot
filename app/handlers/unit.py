@@ -132,14 +132,22 @@ async def choose_work_model(callback: CallbackQuery):
     s=get_last_session(callback.from_user.id)
     if not s: await callback.answer(); return
     model=callback.data.replace("work_","").upper()
-    if model=="FBO":
+    if model == "FBO":
         update_session(s["id"], work_model=model, stage="warehouse_choose")
-        await callback.message.answer("✅ Модель работы: FBO\n\nВыбери склад из списка или напиши название склада вручную 👇", reply_markup=warehouse_keyboard())
+        await callback.message.edit_text(
+            "✅ Модель работы: FBO\n\n"
+            "Выбери склад из списка или напиши название склада вручную 👇",
+            reply_markup=warehouse_keyboard(),
+        )
     else:
         update_session(s["id"], work_model=model, warehouse_name=None, stage="purchase_price")
-        await callback.message.answer("✅ Модель работы: FBS\n\nВведите закупку товара за 1 шт в ₽:")
-    await callback.answer()
+        await callback.message.edit_text(
+            "✅ Модель работы: FBS\n\n"
+            "Введите закупку товара за 1 шт в ₽:",
+        )
 
+    await callback.answer()
+    
 @router.callback_query(F.data.startswith("warehouse_page_"))
 async def warehouse_page(callback: CallbackQuery):
     if callback.data=="warehouse_page_current": await callback.answer(); return
