@@ -79,7 +79,6 @@ async def build_product_data(api_key, selected_card, nm_id):
             promo_price = min(all_prices)
 
         break   
-    wb_price = None
     commissions=await client.get_commissions()
     commission_percent=0; subject=(selected_card.get("subjectName") or "").lower()
     for item in commissions:
