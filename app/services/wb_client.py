@@ -1,3 +1,4 @@
+import asyncio
 import aiohttp
 import logging
 from datetime import datetime
@@ -10,15 +11,38 @@ class WBClient:
 
     async def _request(self, method: str, url: str, **kwargs):
         timeout = aiohttp.ClientTimeout(total=20, connect=5)
-        async with aiohttp.ClientSession(timeout=timeout) as session:
-            async with session.request(method, url, **kwargs) as response:
-                text = await response.text()
-                if response.status == 429:
-                    raise RuntimeError("WB временно ограничил запросы. Подожди 1–2 минуты и попробуй снова.")
-                if response.status >= 400:
-                    raise RuntimeError(f"WB API ошибка: {response.status} — {text[:500]}")
-                return await response.json(content_type=None)
 
+        retry_delays = [1, 3, 7]
+
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            for attempt, delay in enumerate(retry_delays, start=1):
+                async with session.request(method, url, **kwargs) as response:
+                    text = await response.text()
+
+                    if response.status == 429:
+                        log.warning(
+                            "WB rate limit 429. attempt=%s url=%s response=%s",
+                            attempt,
+                            url,
+                            text[:300],
+                        )
+
+                        if attempt == len(retry_delays):
+                            raise RuntimeError(
+                                "WB временно ограничил запросы. Подожди 1–2 минуты и попробуй снова."
+                            )
+
+                        await asyncio.sleep(delay)
+                        continue
+
+                    if response.status >= 400:
+                        raise RuntimeError(f"WB API ошибка: {response.status} — {text[:500]}")
+
+                    return await response.json(content_type=None)
+
+        raise RuntimeError("WB API не ответил после нескольких попыток.")
+    
+    
     async def get_products(self, limit: int = 100, cursor: dict | None = None):
         url = "https://content-api.wildberries.ru/content/v2/get/cards/list"
         wb_cursor = {"limit": limit}

@@ -171,6 +171,8 @@ async def get_public_price(nm_id: str, dest: int = DEFAULT_DEST) -> WBPublicPric
                 return None
 
             payload = await response.json(content_type=None)
+            print("WB PUBLIC STATUS:", response.status)
+            print("WB PUBLIC PAYLOAD:", payload)
 
     source_url = (
         f"{WB_PUBLIC_CARD_URL}"

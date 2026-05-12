@@ -48,25 +48,50 @@ async def build_product_data(api_key, selected_card, nm_id):
     dimensions=selected_card.get("dimensions",{})
     volume_liters,billing_liters=calc_volume_liters(dimensions.get("length"), dimensions.get("width"), dimensions.get("height"))
     client=WBClient(api_key)
-    prices=await client.get_prices(nm_id)
-    seller_price=promo_price=None
+    seller_price = promo_price = None
+
+    try:
+        prices = await client.get_prices(nm_id)
+    except RuntimeError as e:
+        prices = []
+        print(f"WB prices API unavailable for nm_id={nm_id}: {e}")
+
     for item in prices:
-        item_nm=str(item.get("nmID") or item.get("nmId") or item.get("nm") or "")
-        if item_nm != str(nm_id): continue
-        all_prices=[]
+        item_nm = str(item.get("nmID") or item.get("nmId") or item.get("nm") or "")
+        if item_nm != str(nm_id):
+            continue
+
+        all_prices = []
+
         for size in item.get("sizes") or []:
-            for key in ["price","discountedPrice","clubDiscountedPrice","priceWithDisc","discountedPriceWithClub"]:
-                value=size.get(key)
-                if value not in (None,"",0): all_prices.append(float(value))
+            for key in [
+                "price",
+                "discountedPrice",
+                "clubDiscountedPrice",
+                "priceWithDisc",
+                "discountedPriceWithClub",
+            ]:
+                value = size.get(key)
+                if value not in (None, "", 0):
+                    all_prices.append(float(value))
+
         if all_prices:
-            seller_price=max(all_prices); promo_price=min(all_prices)
-        break
+            seller_price = max(all_prices)
+            promo_price = min(all_prices)
+
+        break   
     public_price = await get_public_price(nm_id)
 
     wb_price = public_price.final_price if public_price else None
     price_after_sale = public_price.price_after_sale if public_price else None
     spp_percent = public_price.spp_percent if public_price else 0
     spp_rub = public_price.spp_rub if public_price else 0
+
+    if seller_price is None and public_price and public_price.basic_price:
+        seller_price = public_price.basic_price
+
+    if promo_price is None and public_price and public_price.price_after_sale:
+        promo_price = public_price.price_after_sale
     commissions=await client.get_commissions()
     commission_percent=0; subject=(selected_card.get("subjectName") or "").lower()
     for item in commissions:
