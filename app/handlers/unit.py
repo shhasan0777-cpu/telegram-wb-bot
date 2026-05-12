@@ -8,7 +8,7 @@ from app.services.validation import parse_non_negative_float
 from app.services.wb_client import WBClient
 from app.services.products import build_product_data, send_product_preview, find_warehouse_tariff, calc_logistics_by_tariff
 from app.services.economics import UnitEconomicsInput, calc_unit_economics, calc_volume_liters
-from app.keyboards.common import product_choose_keyboard, products_keyboard, work_model_keyboard, warehouse_keyboard, unit_api_keyboard
+from app.keyboards.common import product_choose_keyboard, products_keyboard, work_model_keyboard, warehouse_keyboard, unit_api_keyboard, fbo_shipment_type_keyboard
 from app.data.wb import FBO_WAREHOUSES
 
 router = Router()
@@ -130,24 +130,59 @@ async def unit_calc_start(callback: CallbackQuery):
 @router.callback_query(F.data.startswith("work_"))
 async def choose_work_model(callback: CallbackQuery):
     s=get_last_session(callback.from_user.id)
-    if not s: await callback.answer(); return
+    if not s:
+        await callback.answer()
+        return
+
     model=callback.data.replace("work_","").upper()
+
     if model == "FBO":
-        update_session(s["id"], work_model=model, stage="warehouse_choose")
+        update_session(s["id"], work_model=model, stage="fbo_shipment_type")
         await callback.message.edit_text(
             "✅ Модель работы: FBO\n\n"
-            "Выбери склад из списка или напиши название склада вручную 👇",
-            reply_markup=warehouse_keyboard(),
+            "Выбери тип отгрузки:",
+            reply_markup=fbo_shipment_type_keyboard(),
         )
     else:
         update_session(s["id"], work_model=model, warehouse_name=None, stage="purchase_price")
         await callback.message.edit_text(
             "✅ Модель работы: FBS\n\n"
-            "Введите закупку товара за 1 шт в ₽:",
+            "Введите закупку товара за 1 шт в ₽:"
         )
 
     await callback.answer()
     
+@router.callback_query(F.data.startswith("fbo_ship_"))
+async def choose_fbo_shipment_type(callback: CallbackQuery):
+    s = get_last_session(callback.from_user.id)
+    if not s:
+        await callback.answer()
+        return
+
+    shipment_type = callback.data.replace("fbo_ship_", "")
+
+    if shipment_type == "boxes":
+        shipment_title = "Короба"
+    elif shipment_type == "monopallets":
+        shipment_title = "Монопаллеты"
+    else:
+        await callback.answer("Неизвестный тип отгрузки")
+        return
+
+    update_session(
+        s["id"],
+        # пока не сохраняем отдельным полем, потому что в таблице его нет
+        stage="warehouse_choose",
+    )
+
+    await callback.message.edit_text(
+        f"✅ Тип отгрузки: {shipment_title}\n\n"
+        "Теперь выбери склад из списка или напиши название склада вручную 👇",
+        reply_markup=warehouse_keyboard(),
+    )
+
+    await callback.answer()
+        
 @router.callback_query(F.data.startswith("warehouse_page_"))
 async def warehouse_page(callback: CallbackQuery):
     if callback.data=="warehouse_page_current": await callback.answer(); return

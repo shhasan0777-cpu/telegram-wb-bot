@@ -77,7 +77,11 @@ def product_choose_keyboard():
 
 def work_model_keyboard():
     return InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="FBO", callback_data="work_fbo"), InlineKeyboardButton(text="FBS", callback_data="work_fbs")]])
-
+def fbo_shipment_type_keyboard():
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="📦 Короба", callback_data="fbo_ship_boxes")],
+        [InlineKeyboardButton(text="🧱 Монопаллеты", callback_data="fbo_ship_monopallets")],
+    ])
 def warehouse_keyboard(page=0, per_page=5):
     total=len(FBO_WAREHOUSES); total_pages=max(1, math.ceil(total/per_page)); page=max(0,min(page,total_pages-1))
     buttons=[]
