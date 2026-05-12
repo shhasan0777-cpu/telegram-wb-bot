@@ -2,7 +2,8 @@ import html, math
 from aiogram.exceptions import TelegramBadRequest
 from app.keyboards.common import calc_unit_keyboard
 from app.services.economics import calc_volume_liters
-from app.services.wb_client import WBClient, wb_get_public_price
+from app.services.wb_client import WBClient
+from app.services.wb_public_prices import get_public_price
 
 
 def get_card_photo(card):
@@ -60,17 +61,51 @@ async def build_product_data(api_key, selected_card, nm_id):
         if all_prices:
             seller_price=max(all_prices); promo_price=min(all_prices)
         break
-    wb_price=await wb_get_public_price(nm_id)
-    base_for_spp=promo_price or seller_price or 0
-    spp_percent=round((base_for_spp-wb_price)/base_for_spp*100,2) if wb_price and base_for_spp else 0
+    public_price = await get_public_price(nm_id)
+
+    wb_price = public_price.final_price if public_price else None
+    price_after_sale = public_price.price_after_sale if public_price else None
+    spp_percent = public_price.spp_percent if public_price else 0
+    spp_rub = public_price.spp_rub if public_price else 0
     commissions=await client.get_commissions()
     commission_percent=0; subject=(selected_card.get("subjectName") or "").lower()
     for item in commissions:
         if (item.get("subjectName") or "").lower()==subject:
             commission_percent=item.get("kgvpMarketplace") or 0; break
-    price_for_calc=promo_price or seller_price or wb_price or 0
-    return {"nm_id":nm_id,"product_name":selected_card.get("title"),"vendor_code":selected_card.get("vendorCode"),"brand":selected_card.get("brand"),"category":selected_card.get("subjectName"),"barcode":get_card_barcode(selected_card),"size":get_card_size(selected_card),"photo":get_card_photo(selected_card),"seller_price":seller_price,"promo_price":promo_price,"wb_price":wb_price,"price":seller_price,"price_with_spp":price_for_calc,"spp_percent":spp_percent,"commission_percent":commission_percent,"commission_rub":calc_commission(price_for_calc,commission_percent),"width":dimensions.get("width"),"height":dimensions.get("height"),"length":dimensions.get("length"),"weight":selected_card.get("weightBrutto"),"volume_liters":volume_liters,"billing_liters":billing_liters}
+    price_for_calc = wb_price or promo_price or seller_price or 0
+    return {
+        "nm_id": nm_id,
+        "product_name": selected_card.get("title"),
+        "vendor_code": selected_card.get("vendorCode"),
+        "brand": selected_card.get("brand"),
+        "category": selected_card.get("subjectName"),
+        "barcode": get_card_barcode(selected_card),
+        "size": get_card_size(selected_card),
+        "photo": get_card_photo(selected_card),
 
+        "seller_price": seller_price,
+        "promo_price": promo_price,
+        "wb_price": wb_price,
+
+        "price": seller_price,
+        "price_after_sale": price_after_sale,
+        "price_with_spp": price_for_calc,
+
+        "spp_percent": spp_percent,
+        "spp_rub": spp_rub,
+        "public_price_source": public_price.source_url if public_price else None,
+
+        "commission_percent": commission_percent,
+        "commission_rub": calc_commission(price_for_calc, commission_percent),
+
+        "width": dimensions.get("width"),
+        "height": dimensions.get("height"),
+        "length": dimensions.get("length"),
+        "weight": selected_card.get("weightBrutto"),
+        "volume_liters": volume_liters,
+        "billing_liters": billing_liters,
+    }
+    
 def build_product_preview_text(data):
     name=html.escape(str(data.get("product_name") or "Товар")); nm_id=data.get("nm_id")
     vendor=html.escape(str(data.get("vendor_code") or "не указан")); brand=html.escape(str(data.get("brand") or "не указан")); category=html.escape(str(data.get("category") or "не указана")); barcode=html.escape(str(data.get("barcode") or "не указан"))

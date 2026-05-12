@@ -45,27 +45,3 @@ class WBClient:
         today = datetime.now().strftime("%Y-%m-%d")
         data = await self._request("GET", "https://common-api.wildberries.ru/api/v1/tariffs/box", headers={"Authorization": self.api_key}, params={"date": today})
         return data.get("response", {}).get("data", {}).get("warehouseList", [])
-
-async def wb_get_public_price(nm_id: str):
-    url = "https://card.wb.ru/cards/v2/detail"
-    headers = {"User-Agent": "Mozilla/5.0", "Accept": "*/*", "Referer": f"https://www.wildberries.ru/catalog/{nm_id}/detail.aspx"}
-    params = {"appType": 1, "curr": "rub", "dest": -446116, "spp": 30, "ab_testing": "false", "nm": str(nm_id).strip()}
-    timeout = aiohttp.ClientTimeout(total=15, connect=5)
-    async with aiohttp.ClientSession(timeout=timeout) as session:
-        async with session.get(url, headers=headers, params=params) as response:
-            if response.status != 200:
-                return None
-            data = await response.json(content_type=None)
-    products = data.get("data", {}).get("products", [])
-    prices = []
-    for product in products:
-        for size in product.get("sizes", []):
-            price_data = size.get("price") or {}
-            for key in ["total", "product", "basic"]:
-                value = price_data.get(key)
-                if value:
-                    value = float(value)
-                    if value > 10000:
-                        value /= 100
-                    prices.append(value)
-    return min(prices) if prices else None
