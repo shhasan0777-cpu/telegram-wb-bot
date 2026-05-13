@@ -44,31 +44,52 @@ def tariff_value(tariff: dict | None, key: str):
     return value
 
 
-def build_fbo_tariff_text(session, tariff: dict | None) -> str:
+def build_fbo_tariff_text(session, box_tariff: dict | None, acceptance_tariff: dict | None) -> str:
+    shipment_type = session["fbo_shipment_type"] if "fbo_shipment_type" in session.keys() else None
+
+    # Тариф приёмки зависит от типа отгрузки
+    if shipment_type == "monopallets":
+        acceptance_base = tariff_value(acceptance_tariff, "monopalletDeliveryBase")
+        acceptance_liter = tariff_value(acceptance_tariff, "monopalletDeliveryLiter")
+        acceptance_label = "Приёмка монопаллеты"
+    else:
+        acceptance_base = tariff_value(acceptance_tariff, "boxDeliveryBase")
+        acceptance_liter = tariff_value(acceptance_tariff, "boxDeliveryLiter")
+        acceptance_label = "Приёмка короба"
+
     return (
         f"✅ Модель работы: FBO\n"
-        f"✅ Тип отгрузки: {shipment_type_title(session['fbo_shipment_type'] if 'fbo_shipment_type' in session.keys() else None)}\n"
+        f"✅ Тип отгрузки: {shipment_type_title(shipment_type)}\n"
         f"✅ Склад: {session['warehouse_name']}\n\n"
         f"📦 Тарифы склада на сегодня:\n"
-        f"• Логистика за 1 л: {tariff_value(tariff, 'boxDeliveryBase')} ₽\n"
-        f"• Доп. литр логистики: {tariff_value(tariff, 'boxDeliveryLiter')} ₽\n"
-        f"• Приёмка поставки: бесплатно\n"
-        f"• Хранение за 1 л остатков: {tariff_value(tariff, 'boxStorageBase')} ₽\n"
-        f"• Доп. литр хранения остатков: {tariff_value(tariff, 'boxStorageLiter')} ₽\n\n"
-        f"Введите закупку товара за 1 шт в ₽:"
-    )
-
+        f"• Логистика за 1 л: {tariff_value(box_tariff, 'boxDeliveryBase')} ₽\n"
+        f"• Доп. литр логистики: {tariff_value(box_tariff, 'boxDeliveryLiter')} ₽\n"
+        f"• {acceptance_label} (база): {acceptance_base} ₽\n"
+        f"• {acceptance_label} (доп. литр): {acceptance_liter} ₽\n\n"
+        f"Введите закупку товара за 1 шт в ₽:"    ) 
 async def send_fbo_tariffs_and_purchase_prompt(message_or_callback_message, session, api_key: str):
-    try:
-        tariffs = await WBClient(api_key).get_box_tariffs()
-        tariff = find_warehouse_tariff(tariffs, session["warehouse_name"])
-        print("SELECTED WAREHOUSE:", session["warehouse_name"])
-        print("FOUND WB TARIFF:", tariff)
-    except Exception as e:
-        tariff = None
-        print(f"WB tariffs API unavailable for warehouse={session['warehouse_name']}: {e}")
+    client = WBClient(api_key)
 
-    await message_or_callback_message.answer(build_fbo_tariff_text(session, tariff))
+    try:
+        box_tariffs = await client.get_box_tariffs()
+        box_tariff = find_warehouse_tariff(box_tariffs, session["warehouse_name"])
+        print("SELECTED WAREHOUSE:", session["warehouse_name"])
+        print("FOUND BOX TARIFF:", box_tariff)
+    except Exception as e:
+        box_tariff = None
+        print(f"WB box tariffs API unavailable for warehouse={session['warehouse_name']}: {e}")
+
+    try:
+        acceptance_tariffs = await client.get_acceptance_tariffs()
+        acceptance_tariff = find_warehouse_tariff(acceptance_tariffs, session["warehouse_name"])
+        print("FOUND ACCEPTANCE TARIFF:", acceptance_tariff)
+    except Exception as e:
+        acceptance_tariff = None
+        print(f"WB acceptance tariffs API unavailable for warehouse={session['warehouse_name']}: {e}")
+
+    await message_or_callback_message.answer(
+        build_fbo_tariff_text(session, box_tariff, acceptance_tariff)
+    )
 async def safe_callback_answer(callback: CallbackQuery, text: str | None = None):
     try:
         await callback.answer(text)

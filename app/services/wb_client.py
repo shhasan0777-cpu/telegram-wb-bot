@@ -42,7 +42,6 @@ class WBClient:
 
         raise RuntimeError("WB API не ответил после нескольких попыток.")
     
-    
     async def get_products(self, limit: int = 100, cursor: dict | None = None):
         url = "https://content-api.wildberries.ru/content/v2/get/cards/list"
         wb_cursor = {"limit": limit}
@@ -68,4 +67,13 @@ class WBClient:
     async def get_box_tariffs(self):
         today = datetime.now().strftime("%Y-%m-%d")
         data = await self._request("GET", "https://common-api.wildberries.ru/api/v1/tariffs/box", headers={"Authorization": self.api_key}, params={"date": today})
+        return data.get("response", {}).get("data", {}).get("warehouseList", [])
+    async def get_acceptance_tariffs(self):
+        today = datetime.now().strftime("%Y-%m-%d")
+        data = await self._request(
+            "GET",
+            "https://common-api.wildberries.ru/api/v1/tariffs/acceptance",
+            headers={"Authorization": self.api_key},
+            params={"date": today},
+        )
         return data.get("response", {}).get("data", {}).get("warehouseList", [])
