@@ -7,7 +7,12 @@ from app.repositories.users import save_user
 from app.services.validation import parse_non_negative_float
 from app.services.wb_client import WBClient
 from app.services.products import build_product_data, send_product_preview, find_warehouse_tariff, calc_logistics_by_tariff
-from app.services.economics import UnitEconomicsInput, calc_unit_economics, calc_volume_liters
+from app.services.economics import (
+    UnitEconomicsInput,
+    calc_unit_economics,
+    calc_volume_liters,
+    calc_fbo_logistics_full,
+)
 from app.keyboards.common import product_choose_keyboard, products_keyboard, work_model_keyboard, warehouse_keyboard, unit_api_keyboard, fbo_shipment_type_keyboard
 from app.data.wb import FBO_WAREHOUSES
 
@@ -35,6 +40,15 @@ def shipment_type_title(value: str | None) -> str:
     return "не выбран"
 
 
+def money_to_float(value, default=0):
+    try:
+        if value in (None, ""):
+            return default
+        return float(str(value).replace(",", "."))
+    except Exception:
+        return default
+
+
 def tariff_value(tariff: dict | None, key: str):
     if not tariff:
         return "не найдено"
@@ -44,10 +58,39 @@ def tariff_value(tariff: dict | None, key: str):
     return value
 
 
+def calc_fbo_logistics_from_box_tariff(session, box_tariff: dict | None):
+    _, billing_liters = calc_volume_liters(
+        session["length"],
+        session["width"],
+        session["height"],
+    )
+
+    base_first_liter = money_to_float(
+        box_tariff.get("boxDeliveryBase") if box_tariff else None,
+        0,
+    )
+
+    extra_liter_price = money_to_float(
+        box_tariff.get("boxDeliveryLiter") if box_tariff else None,
+        0,
+    )
+
+    logistics_rub = base_first_liter + max(billing_liters - 1, 0) * extra_liter_price
+
+    return {
+        "billing_liters": billing_liters,
+        "base_first_liter": base_first_liter,
+        "extra_liter_price": extra_liter_price,
+        "logistics_rub": round(logistics_rub, 2),
+    }
+
+
 def build_fbo_tariff_text(session, box_tariff: dict | None, acceptance_tariff: dict | None) -> str:
     shipment_type = session["fbo_shipment_type"] if "fbo_shipment_type" in session.keys() else None
+    price_for_calc = session["price_with_spp"] or session["price"] or 0
 
-    # Тариф приёмки зависит от типа отгрузки
+    logistics = calc_fbo_logistics_from_box_tariff(session, box_tariff)
+
     if shipment_type == "monopallets":
         acceptance_base = tariff_value(acceptance_tariff, "monopalletDeliveryBase")
         acceptance_liter = tariff_value(acceptance_tariff, "monopalletDeliveryLiter")
@@ -61,31 +104,52 @@ def build_fbo_tariff_text(session, box_tariff: dict | None, acceptance_tariff: d
         f"✅ Модель работы: FBO\n"
         f"✅ Тип отгрузки: {shipment_type_title(shipment_type)}\n"
         f"✅ Склад: {session['warehouse_name']}\n\n"
-        f"📦 Тарифы склада на сегодня:\n"
-        f"• Логистика за 1 л: {tariff_value(box_tariff, 'boxDeliveryBase')} ₽\n"
-        f"• Доп. литр логистики: {tariff_value(box_tariff, 'boxDeliveryLiter')} ₽\n"
-        f"• {acceptance_label} (база): {acceptance_base} ₽\n"
-        f"• {acceptance_label} (доп. литр): {acceptance_liter} ₽\n\n"
-        f"Введите закупку товара за 1 шт в ₽:"    ) 
+        f"📦 Формула логистики WB:\n"
+        f"{logistics['base_first_liter']} ₽ за 1 л + "
+        f"{logistics['extra_liter_price']} ₽ за каждый доп. литр\n\n"
+        f"📊 Данные для расчёта:\n"
+        f"• Цена после скидок/акции: {round(price_for_calc or 0, 2)} ₽\n"
+        f"• Расчётный литраж: {logistics['billing_liters']} л\n"
+        f"• База за 1 л: {logistics['base_first_liter']} ₽\n"
+        f"• Доп. литр: {logistics['extra_liter_price']} ₽\n\n"
+        f"🚚 Расчётная логистика: {logistics['logistics_rub']} ₽\n"
+        f"📥 {acceptance_label}: база {acceptance_base} ₽, доп. литр {acceptance_liter} ₽\n\n"
+        f"Введите закупку товара за 1 шт в ₽:"
+    )
+
+
 async def send_fbo_tariffs_and_purchase_prompt(message_or_callback_message, session, api_key: str):
     client = WBClient(api_key)
+
+    box_tariff = None
+    acceptance_tariff = None
 
     try:
         box_tariffs = await client.get_box_tariffs()
         box_tariff = find_warehouse_tariff(box_tariffs, session["warehouse_name"])
+
+        print("\n========== WB BOX TARIFF DEBUG ==========")
         print("SELECTED WAREHOUSE:", session["warehouse_name"])
-        print("FOUND BOX TARIFF:", box_tariff)
+        print("FOUND BOX TARIFF FULL:", box_tariff)
+        print("ALL BOX TARIFF KEYS:", list(box_tariff.keys()) if box_tariff else None)
+        print("=========================================\n")
     except Exception as e:
-        box_tariff = None
         print(f"WB box tariffs API unavailable for warehouse={session['warehouse_name']}: {e}")
 
     try:
         acceptance_tariffs = await client.get_acceptance_tariffs()
         acceptance_tariff = find_warehouse_tariff(acceptance_tariffs, session["warehouse_name"])
-        print("FOUND ACCEPTANCE TARIFF:", acceptance_tariff)
+
+        print("\n======= WB ACCEPTANCE TARIFF DEBUG =======")
+        print("SELECTED WAREHOUSE:", session["warehouse_name"])
+        print("FOUND ACCEPTANCE TARIFF FULL:", acceptance_tariff)
+        print("ALL ACCEPTANCE TARIFF KEYS:", list(acceptance_tariff.keys()) if acceptance_tariff else None)
+        print("=========================================\n")
     except Exception as e:
-        acceptance_tariff = None
         print(f"WB acceptance tariffs API unavailable for warehouse={session['warehouse_name']}: {e}")
+
+    logistics = calc_fbo_logistics_from_box_tariff(session, box_tariff)
+    update_session(session["id"], logistics_rub=logistics["logistics_rub"])
 
     await message_or_callback_message.answer(
         build_fbo_tariff_text(session, box_tariff, acceptance_tariff)
@@ -367,10 +431,21 @@ async def handle_unit_stage(message: Message, session, stage: str, text: str):
         if val is None: await message.answer("Введите неотрицательное число."); return
         update_session(session["id"], salary_expenses=val); updated=get_last_session(uid); api_key=get_session_api_key(updated)
         logistics=0
-        if updated["work_model"]=="FBO":
-            tariffs=await WBClient(api_key).get_box_tariffs(); _, billing=calc_volume_liters(updated["length"],updated["width"],updated["height"])
-            logistics=calc_logistics_by_tariff(find_warehouse_tariff(tariffs, updated["warehouse_name"]), billing)
-            update_session(updated["id"], logistics_rub=logistics); updated=get_last_session(uid)
+        if updated["work_model"] == "FBO":
+            tariffs = await WBClient(api_key).get_box_tariffs()
+            box_tariff = find_warehouse_tariff(tariffs, updated["warehouse_name"])
+
+            print("\n========== WB FINAL LOGISTICS DEBUG ==========")
+            print("SELECTED WAREHOUSE:", updated["warehouse_name"])
+            print("FINAL BOX TARIFF FULL:", box_tariff)
+            print("FINAL BOX TARIFF KEYS:", list(box_tariff.keys()) if box_tariff else None)
+            print("=============================================\n")
+
+            logistics_data = calc_fbo_logistics_from_box_tariff(updated, box_tariff)
+            logistics = logistics_data["logistics_rub"]
+
+            update_session(updated["id"], logistics_rub=logistics)
+            updated = get_last_session(uid)
         result=calc_unit_economics(UnitEconomicsInput(price_with_spp=updated["price_with_spp"] or 0, price=updated["price"] or 0, commission_rub=updated["commission_rub"] or 0, logistics_rub=updated["logistics_rub"] or 0, purchase_price=updated["purchase_price"] or 0, fulfilment_price=updated["fulfilment_price"] or 0, tax_percent=updated["tax_percent"] or 0, other_expenses=updated["other_expenses"] or 0, salary_expenses=updated["salary_expenses"] or 0))
         volume,billing=calc_volume_liters(updated["length"],updated["width"],updated["height"])
         update_session(updated["id"], profit_per_unit=result["profit"], margin_percent=result["margin"], roi_percent=result["roi"], stage="completed")
